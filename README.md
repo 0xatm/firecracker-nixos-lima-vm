@@ -1,109 +1,123 @@
-# 🔥 Firecracker MicroVM on MacBook Pro M3
+# Firecracker-on-Lima (Portable NixOS Stack)
 
-A lightweight, high-performance virtualization setup using Firecracker microVMs on Apple Silicon MacBooks via Lima.
+This repository provides a portable, fresh-clone workflow to run a Firecracker microVM inside a NixOS Lima VM on Apple Silicon.
 
-## 🚀 Quick Overview
+The goal is simple:
+1. Clone this repo anywhere.
+2. Bootstrap once.
+3. Run one connect script from the host and land in the inner Firecracker VM.
 
-This project provides a complete setup for running Firecracker microVMs on MacBook Pro M3, leveraging Apple's hardware virtualization capabilities for optimal performance.
+## Quick Start
 
-## 📋 What's Included
+### 1) Install Lima
 
-- **🔧 Firecracker Setup** - Latest Firecracker binary installation
-- **🐧 Ubuntu MicroVM** - Pre-configured Ubuntu root filesystem
-- **🌐 Network Configuration** - Automated networking and internet access
-- **🔐 SSH Access** - Secure key-based authentication
-- **⚡ Automation Scripts** - One-command microVM startup
-
-## 🎯 Key Features
-
-- ⚡ **Blazing Fast** - Native Apple Silicon virtualization
-- 🔒 **Secure Isolation** - Firecracker's minimal attack surface
-- 🌐 **Network Ready** - Automatic internet connectivity
-- 📱 **Lightweight** - Minimal resource footprint
-- 🛠️ **Easy Setup** - Automated configuration scripts
-
-## 🏗️ System Requirements
-
-- **MacBook Pro M3** (or newer Apple Silicon)
-- **macOS** with Lima installed
-- **Terminal** access
-- ** sudo** privileges
-
-## 🚀 Getting Started
-
-### 1. Install Lima
+Use either Homebrew or Nix:
 
 ```bash
 brew install lima
 ```
 
-### 2. Run Setup
+or
 
 ```bash
-# Follow the detailed setup guide
-cat instructions.md
+nix-env -iA nixpkgs.lima
 ```
 
-### 3. Start Your MicroVM
+### 2) Bootstrap the NixOS Lima VM
+
+From the repository root:
 
 ```bash
-./start.sh
+./scripts/bootstrap.sh
 ```
 
-## 📁 Project Structure
+What bootstrap does:
+- removes any existing `fc-nixos` instance first (fresh deterministic bootstrap every run),
+- creates a Lima VM from the vendored template at `lima/nixos.yaml` (instance name: `fc-nixos` by default),
+- enables nested virtualization (`nestedVirtualization=true`),
+- disables default host mounts (no home mount confusion),
+- copies `nixos/configuration.nix` as a Firecracker module and layers it on top of the guest's base NixOS config,
+- runs `sudo nixos-rebuild switch`,
+- first-run service downloads/builds Firecracker guest assets,
+- exports the Firecracker guest SSH key to `./.state/ssh/microvm.id_rsa`.
 
-```
-microVM/
-├── README.md              # This file - project overview
-├── instructions.md        # 📖 Detailed setup guide
-├── start.sh              # 🚀 MicroVM startup script
-├── start.py              # 🐍 Python alternative (optional)
-├── vm_config.json        # ⚙️ VM configuration
-└── *.ext4, *.id_rsa      # 📦 Generated files (after setup)
-```
-
-## 🎮 Usage
-
-Once setup is complete:
+### 3) Connect to the inner Firecracker VM from host
 
 ```bash
-# Start Firecracker (Terminal 1)
-sudo ./firecracker --api-sock /tmp/firecracker.socket --enable-pci
-
-# Launch MicroVM (Terminal 2)
-./start.sh
-
-# Connect to your MicroVM
-ssh -i *.id_rsa root@172.16.0.2
+./connect.sh
 ```
 
-## 🔧 Configuration
+This script tunnels host SSH through Lima (`ProxyCommand`) and drops you into the Firecracker microVM.
 
-The microVM comes pre-configured with:
+## Daily Use
 
-- **IP Address**: `172.16.0.2`
-- **Host Gateway**: `172.16.0.1`
-- **SSH Access**: Key-based authentication
-- **Internet**: NAT via host network
+Start and connect in one step:
 
-## 🐛 Troubleshooting
+```bash
+./connect.sh
+```
 
-Common issues and solutions are covered in the [detailed instructions](instructions.md#-troubleshooting).
+`connect.sh` will:
+- start the Lima VM if needed,
+- ensure Firecracker services are started inside NixOS,
+- open SSH into the inner microVM.
 
-## 📚 Learn More
+Re-run bootstrap only when you want to re-apply NixOS config/script changes:
 
-- 🔥 [Firecracker Documentation](https://github.com/firecracker-microvm/firecracker)
-- 🍎 [Lima Virtualization](https://github.com/lima-vm/lima)
-- 🖥️ [Apple Silicon Virtualization](https://developer.apple.com/documentation/virtualization)
+```bash
+./scripts/bootstrap.sh
+```
 
-## 🤝 Contributing
+Stop Lima instance:
 
-Feel free to submit issues and enhancement requests!
+```bash
+./scripts/stop.sh
+```
 
-## 📄 License
+Reset everything (delete Lima instance + local `.state`):
 
-This project follows the same license as Firecracker.
+```bash
+./scripts/reset.sh
+```
 
----
+## Notes
 
-**🎉 Ready to dive in? Check out [instructions.md](instructions.md) for the complete setup guide!**
+- Default Lima instance name is `fc-nixos`.
+- Override instance name with `LIMA_INSTANCE_NAME=<name>` for all scripts.
+- Override template path with `LIMA_TEMPLATE_PATH=/absolute/path/to/nixos.yaml` if needed.
+- `connect.sh` defaults to `root@172.16.0.2` and key `./.state/ssh/microvm.id_rsa`.
+- First bootstrap can take several minutes due kernel/rootfs download and image build.
+- Bootstrap is destructive for the Lima instance by design (it recreates `fc-nixos` to avoid drift).
+
+## Guide Parity
+
+The automated setup preserves the core requirements from the original Firecracker-on-Lima guide:
+- nested virtualization is enabled on Lima (`nestedVirtualization=true`) so `/dev/kvm` is available,
+- Firecracker is started with `--api-sock /tmp/firecracker.socket`,
+- kernel and rootfs are pulled from the `firecracker-ci/v1.13/<arch>` artifact stream,
+- guest networking uses `tap0` with `172.16.0.1/30` and guest `172.16.0.2`,
+- host NAT/forwarding is configured and guest default route + DNS are set after boot.
+
+## Repo Structure
+
+- `scripts/bootstrap.sh` - create/start/configure NixOS Lima and apply guest config
+- `scripts/stop.sh` - stop Lima instance
+- `scripts/reset.sh` - delete Lima instance and local state
+- `connect.sh` - host-to-Firecracker SSH helper
+- `nixos/configuration.nix` - NixOS configuration applied inside Lima
+- `nixos/scripts/init-first-run.sh` - one-time Firecracker guest asset initialization
+- `nixos/scripts/start-stack.sh` - per-boot Firecracker + networking startup
+
+## Troubleshooting
+
+Check guest services:
+
+```bash
+limactl shell fc-nixos -- sudo systemctl status firecracker firecracker-microvm-init firecracker-microvm-start
+```
+
+Follow logs:
+
+```bash
+limactl shell fc-nixos -- sudo journalctl -u firecracker -u firecracker-microvm-init -u firecracker-microvm-start -f
+```
