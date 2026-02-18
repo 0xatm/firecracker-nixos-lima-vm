@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-API_SOCKET="${API_SOCKET:-/run/firecracker/firecracker.socket}"
+API_SOCKET="${API_SOCKET:-/tmp/firecracker.socket}"
 WORKDIR="${WORKDIR:-/var/lib/firecracker-microvm}"
 LOG_PATH="${LOG_PATH:-/var/log/firecracker.log}"
 
@@ -64,7 +64,6 @@ ip addr add "${TAP_IP}${MASK_SHORT}" dev "$TAP_DEV"
 ip link set dev "$TAP_DEV" up
 
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
-ip6tables -P FORWARD ACCEPT >/dev/null 2>&1 || true
 iptables -P FORWARD ACCEPT
 
 HOST_IFACE="$(ip -j route list default | jq -r '.[0].dev // empty')"

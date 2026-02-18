@@ -51,9 +51,9 @@ if ! limactl shell "$VM_NAME" -- sh -lc 'command -v nc >/dev/null 2>&1' >/dev/nu
   exit 1
 fi
 
-limactl start "$VM_NAME" >/dev/null
+limactl start "$VM_NAME" >/dev/null 2>&1 || true
 
-limactl shell "$VM_NAME" -- sudo systemctl start firecracker firecracker-microvm-init firecracker-microvm-start >/dev/null
+limactl shell "$VM_NAME" -- sudo systemctl start firecracker-microvm-start >/dev/null
 
 exec ssh \
   -o "ProxyCommand=limactl shell ${VM_NAME} -- nc %h %p" \

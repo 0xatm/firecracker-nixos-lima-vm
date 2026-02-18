@@ -109,13 +109,25 @@ if [[ ! -f "$LIMA_TEMPLATE_PATH" ]]; then
 fi
 
 TEMP_LIMA_TEMPLATE="$(mktemp "${STATE_DIR}/lima-template.XXXXXX.yaml")"
-trap 'rm -f "${TEMP_LIMA_TEMPLATE}"' EXIT
+TEMP_MERGED_CONFIG_LOCAL="$(mktemp "${STATE_DIR}/fc-bootstrap-config.XXXXXX.nix")"
+MERGED_CONFIG_BASENAME="$(basename "$TEMP_MERGED_CONFIG_LOCAL")"
+trap 'rm -f "${TEMP_LIMA_TEMPLATE}" "${TEMP_MERGED_CONFIG_LOCAL}"' EXIT
 
 cat "$LIMA_TEMPLATE_PATH" >"$TEMP_LIMA_TEMPLATE"
 cat >>"$TEMP_LIMA_TEMPLATE" <<EOF
 cpus: ${LIMA_CPUS}
 memory: "${LIMA_MEMORY}"
 disk: "${LIMA_DISK}"
+EOF
+
+cat >"$TEMP_MERGED_CONFIG_LOCAL" <<'EOF'
+{ ... }:
+{
+  imports = [
+    /etc/nixos/configuration.nix
+    /etc/nixos/firecracker-module.nix
+  ];
+}
 EOF
 
 echo "[bootstrap] Creating Lima instance '${VM_NAME}' from local template..."
@@ -147,6 +159,7 @@ limactl copy \
     "${REPO_ROOT}/nixos/configuration.nix" \
     "${REPO_ROOT}/nixos/scripts/init-first-run.sh" \
     "${REPO_ROOT}/nixos/scripts/start-stack.sh" \
+    "${TEMP_MERGED_CONFIG_LOCAL}" \
     "${VM_NAME}:${GUEST_TMP_DIR}/"
 
 run_in_vm "set -euo pipefail; \
@@ -163,14 +176,14 @@ run_in_vm "set -euo pipefail; \
   \$SUDO cp '${GUEST_TMP_DIR}/configuration.nix' '${GUEST_MODULE_CONFIG}'; \
   \$SUDO cp '${GUEST_TMP_DIR}/init-first-run.sh' /etc/firecracker/scripts/init-first-run.sh; \
   \$SUDO cp '${GUEST_TMP_DIR}/start-stack.sh' /etc/firecracker/scripts/start-stack.sh; \
+  \$SUDO cp '${GUEST_TMP_DIR}/${MERGED_CONFIG_BASENAME}' '${GUEST_MERGED_CONFIG}'; \
   \$SUDO sh -lc \"printf '%s\n' \
     'MICROVM_VCPUS=${MICROVM_VCPUS}' \
     'MICROVM_MEM_MIB=${MICROVM_MEM_MIB}' \
     'ROOTFS_SIZE=${MICROVM_ROOTFS_SIZE}' \
     > /etc/firecracker/env.local\"; \
   \$SUDO chmod 0644 /etc/firecracker/env.local; \
-  \$SUDO chmod 0755 /etc/firecracker/scripts/init-first-run.sh /etc/firecracker/scripts/start-stack.sh; \
-  \$SUDO sh -lc \"printf '%s\n' '{ ... }:' '{' '  imports = [' '    ${GUEST_BASE_CONFIG}' '    ${GUEST_MODULE_CONFIG}' '  ];' '}' > '${GUEST_MERGED_CONFIG}'\""
+  \$SUDO chmod 0755 /etc/firecracker/scripts/init-first-run.sh /etc/firecracker/scripts/start-stack.sh"
 
 echo "[bootstrap] Applying NixOS configuration (nixos-rebuild switch)..."
 run_in_vm "set -euo pipefail; \

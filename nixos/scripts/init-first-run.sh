@@ -32,17 +32,27 @@ if [[ -f "$STATE_FILE" ]]; then
 fi
 
 echo "[init] Resolving latest Firecracker kernel + rootfs keys..."
-KERNEL_KEY="$( (curl -fsSL "$KERNEL_LIST_URL" || true) \
+KERNEL_XML="$(curl -fsSL "$KERNEL_LIST_URL")" || {
+  echo "[init] Failed to fetch kernel index: ${KERNEL_LIST_URL}" >&2
+  exit 1
+}
+
+ROOTFS_XML="$(curl -fsSL "$ROOTFS_LIST_URL")" || {
+  echo "[init] Failed to fetch rootfs index: ${ROOTFS_LIST_URL}" >&2
+  exit 1
+}
+
+KERNEL_KEY="$(printf '%s\n' "$KERNEL_XML" \
   | grep -oE "<Key>${BASE_PREFIX}/vmlinux-5\\.10\\.[0-9]{3}</Key>" \
   | sed -e 's#<Key>##' -e 's#</Key>##' \
   | sort -V \
-  | tail -1)"
+  | tail -1 || true)"
 
-ROOTFS_KEY="$( (curl -fsSL "$ROOTFS_LIST_URL" || true) \
+ROOTFS_KEY="$(printf '%s\n' "$ROOTFS_XML" \
   | grep -oE "<Key>${BASE_PREFIX}/ubuntu-[0-9]+\\.[0-9]+\\.squashfs</Key>" \
   | sed -e 's#<Key>##' -e 's#</Key>##' \
   | sort -V \
-  | tail -1)"
+  | tail -1 || true)"
 
 if [[ -z "$KERNEL_KEY" || -z "$ROOTFS_KEY" ]]; then
   echo "[init] Failed to resolve kernel/rootfs keys from Firecracker artifact index." >&2
