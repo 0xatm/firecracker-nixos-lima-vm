@@ -5,6 +5,9 @@ WORKDIR="${WORKDIR:-/var/lib/firecracker-microvm}"
 STATE_FILE="${WORKDIR}/.initialized"
 FC_STREAM="${FC_STREAM:-v1.13}"
 ROOTFS_SIZE="${ROOTFS_SIZE:-1G}"
+TAP_IP="${TAP_IP:-172.16.0.1}"
+GUEST_DNS_1="${GUEST_DNS_1:-1.1.1.1}"
+GUEST_DNS_2="${GUEST_DNS_2:-8.8.8.8}"
 
 ARCH_RAW="$(uname -m)"
 case "$ARCH_RAW" in
@@ -81,6 +84,45 @@ unsquashfs -d "${WORKDIR}/squashfs-root" "${WORKDIR}/rootfs.squashfs.upstream"
 install -d -m 0755 "${WORKDIR}/squashfs-root/etc/systemd/system/multi-user.target.wants"
 ln -sf /etc/systemd/system/fcnet.service \
   "${WORKDIR}/squashfs-root/etc/systemd/system/multi-user.target.wants/fcnet.service"
+
+# Ensure default route + DNS are in place even if host-side SSH post-boot
+# fixups are delayed.
+install -d -m 0755 "${WORKDIR}/squashfs-root/usr/local/bin"
+cat > "${WORKDIR}/squashfs-root/usr/local/bin/fc-network-fix.sh" <<EOF
+#!/bin/sh
+set -eu
+
+i=0
+while [ "\$i" -lt 30 ]; do
+  if ip link show eth0 >/dev/null 2>&1; then
+    break
+  fi
+  i=\$((i + 1))
+  sleep 1
+done
+
+ip route replace default via ${TAP_IP} dev eth0 || true
+printf 'nameserver %s\nnameserver %s\n' '${GUEST_DNS_1}' '${GUEST_DNS_2}' > /etc/resolv.conf
+EOF
+chmod 0755 "${WORKDIR}/squashfs-root/usr/local/bin/fc-network-fix.sh"
+
+cat > "${WORKDIR}/squashfs-root/etc/systemd/system/fc-network-fix.service" <<'EOF'
+[Unit]
+Description=Ensure microVM default route and DNS
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/fc-network-fix.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+ln -sf /etc/systemd/system/fc-network-fix.service \
+  "${WORKDIR}/squashfs-root/etc/systemd/system/multi-user.target.wants/fc-network-fix.service"
 
 if [[ ! -f "${WORKDIR}/microvm.id_rsa" ]]; then
   ssh-keygen -q -t rsa -b 4096 -N "" -f "${WORKDIR}/microvm.id_rsa"

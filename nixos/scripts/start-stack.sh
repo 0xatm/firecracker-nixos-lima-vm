@@ -12,6 +12,8 @@ GUEST_IP="${GUEST_IP:-172.16.0.2}"
 FC_MAC="${FC_MAC:-06:00:AC:10:00:02}"
 MICROVM_VCPUS="${MICROVM_VCPUS:-1}"
 MICROVM_MEM_MIB="${MICROVM_MEM_MIB:-1024}"
+GUEST_DNS_1="${GUEST_DNS_1:-1.1.1.1}"
+GUEST_DNS_2="${GUEST_DNS_2:-8.8.8.8}"
 
 RUNTIME_ENV="${WORKDIR}/runtime.env"
 if [[ -f "$RUNTIME_ENV" ]]; then
@@ -130,11 +132,11 @@ sleep 0.05
 fc_put "/actions" '{"action_type":"InstanceStart"}'
 
 echo "[start] Waiting for guest SSH to become reachable..."
-ssh_ready=0
-probe_count=8
+guest_network_ready=0
+probe_count="${SSH_PROBE_COUNT:-24}"
 for i in $(seq 1 "$probe_count"); do
-  echo "[start] SSH probe ${i}/${probe_count}..."
-  if timeout 5s ssh -i "$KEY_PATH" \
+  echo "[start] SSH/network probe ${i}/${probe_count}..."
+  if timeout 6s ssh -i "$KEY_PATH" \
     -o ConnectTimeout=3 \
     -o BatchMode=yes \
     -o PreferredAuthentications=publickey \
@@ -142,37 +144,20 @@ for i in $(seq 1 "$probe_count"); do
     -o IdentityAgent=none \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
-    root@"$GUEST_IP" true >/dev/null 2>&1; then
-    ssh_ready=1
+    root@"$GUEST_IP" \
+    "ip route replace default via ${TAP_IP} dev eth0 && \
+     printf 'nameserver %s\nnameserver %s\n' '${GUEST_DNS_1}' '${GUEST_DNS_2}' > /etc/resolv.conf" \
+    >/dev/null 2>&1; then
+    guest_network_ready=1
     break
   fi
   sleep 1
 done
 
-if [[ "$ssh_ready" -eq 1 ]]; then
-  echo "[start] Guest SSH is reachable; applying route and DNS defaults."
-  timeout 12s ssh -i "$KEY_PATH" \
-    -o ConnectTimeout=6 \
-    -o BatchMode=yes \
-    -o PreferredAuthentications=publickey \
-    -o IdentitiesOnly=yes \
-    -o IdentityAgent=none \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    root@"$GUEST_IP" \
-    "ip route replace default via ${TAP_IP} dev eth0" >/dev/null 2>&1 || true
-  timeout 12s ssh -i "$KEY_PATH" \
-    -o ConnectTimeout=6 \
-    -o BatchMode=yes \
-    -o PreferredAuthentications=publickey \
-    -o IdentitiesOnly=yes \
-    -o IdentityAgent=none \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    root@"$GUEST_IP" \
-    "printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf" >/dev/null 2>&1 || true
+if [[ "$guest_network_ready" -eq 1 ]]; then
+  echo "[start] Guest network defaults applied (route + DNS)."
 else
-  echo "[start] Warning: guest SSH did not become ready within timeout; continuing."
+  echo "[start] Warning: guest SSH/network setup did not complete within timeout; continuing."
 fi
 
 echo "[start] Firecracker microVM stack started."
