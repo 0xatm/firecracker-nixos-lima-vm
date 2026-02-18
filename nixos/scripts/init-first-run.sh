@@ -4,6 +4,7 @@ set -euo pipefail
 WORKDIR="${WORKDIR:-/var/lib/firecracker-microvm}"
 STATE_FILE="${WORKDIR}/.initialized"
 FC_STREAM="${FC_STREAM:-v1.13}"
+ROOTFS_SIZE="${ROOTFS_SIZE:-1G}"
 
 ARCH_RAW="$(uname -m)"
 case "$ARCH_RAW" in
@@ -80,7 +81,7 @@ install -m 0600 "${WORKDIR}/microvm.id_rsa.pub" "${WORKDIR}/squashfs-root/root/.
 chown -R root:root "${WORKDIR}/squashfs-root"
 
 echo "[init] Building ext4 rootfs..."
-truncate -s 1G "${WORKDIR}/rootfs.ext4"
+truncate -s "${ROOTFS_SIZE}" "${WORKDIR}/rootfs.ext4"
 mkfs.ext4 -q -F -d "${WORKDIR}/squashfs-root" "${WORKDIR}/rootfs.ext4"
 
 echo "KERNEL_PATH=${WORKDIR}/vmlinux" > "${WORKDIR}/runtime.env"

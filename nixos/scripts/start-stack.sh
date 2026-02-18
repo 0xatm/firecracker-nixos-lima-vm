@@ -10,6 +10,8 @@ TAP_IP="${TAP_IP:-172.16.0.1}"
 MASK_SHORT="${MASK_SHORT:-/30}"
 GUEST_IP="${GUEST_IP:-172.16.0.2}"
 FC_MAC="${FC_MAC:-06:00:AC:10:00:02}"
+MICROVM_VCPUS="${MICROVM_VCPUS:-1}"
+MICROVM_MEM_MIB="${MICROVM_MEM_MIB:-1024}"
 
 RUNTIME_ENV="${WORKDIR}/runtime.env"
 if [[ -f "$RUNTIME_ENV" ]]; then
@@ -121,7 +123,7 @@ if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
 fi
 
 fc_put "/boot-source" "{\"kernel_image_path\":\"${KERNEL_PATH}\",\"boot_args\":\"${boot_args}\"}"
-fc_put "/machine-config" '{"vcpu_count":1,"mem_size_mib":1024,"smt":false}'
+fc_put "/machine-config" "{\"vcpu_count\":${MICROVM_VCPUS},\"mem_size_mib\":${MICROVM_MEM_MIB},\"smt\":false}"
 fc_put "/drives/rootfs" "{\"drive_id\":\"rootfs\",\"path_on_host\":\"${ROOTFS_PATH}\",\"is_root_device\":true,\"is_read_only\":false}"
 fc_put "/network-interfaces/net1" "{\"iface_id\":\"net1\",\"guest_mac\":\"${FC_MAC}\",\"host_dev_name\":\"${TAP_DEV}\"}"
 

@@ -34,6 +34,9 @@
     GUEST_IP=172.16.0.2
     FC_MAC=06:00:AC:10:00:02
     FC_STREAM=v1.13
+    MICROVM_VCPUS=1
+    MICROVM_MEM_MIB=1024
+    ROOTFS_SIZE=1G
   '';
 
   systemd.tmpfiles.rules = [
@@ -75,7 +78,10 @@
     ];
     serviceConfig = {
       Type = "oneshot";
-      EnvironmentFile = "/etc/firecracker/env";
+      EnvironmentFile = [
+        "/etc/firecracker/env"
+        "-/etc/firecracker/env.local"
+      ];
       ExecStart = "/etc/firecracker/scripts/init-first-run.sh";
       RemainAfterExit = true;
     };
@@ -99,7 +105,10 @@
     ];
     serviceConfig = {
       Type = "oneshot";
-      EnvironmentFile = "/etc/firecracker/env";
+      EnvironmentFile = [
+        "/etc/firecracker/env"
+        "-/etc/firecracker/env.local"
+      ];
       ExecStart = "/etc/firecracker/scripts/start-stack.sh";
       TimeoutStartSec = "3min";
       RemainAfterExit = true;
