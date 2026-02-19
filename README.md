@@ -1,4 +1,4 @@
-# Firecracker-on-Lima (Declarative NixOS)
+# Firecracker-on-NixOS-on-Lima
 
 This repo bootstraps a NixOS Lima VM that declaratively runs Firecracker and a nested Ubuntu microVM.
 
@@ -43,6 +43,9 @@ From repo root:
 - ensure the Lima VM is running
 - start `firecracker-microvm-start.service`
 - SSH into the nested microVM via Lima proxy
+
+It may take a minute to start the service when you first bring up the Lima VM and connect.
+
 
 ## Configuration
 
@@ -133,6 +136,8 @@ Check Firecracker API socket/process:
 ```bash
 limactl shell fc-nixos -- bash -lc "ps -ef | grep -E '[f]irecracker --api-sock /tmp/firecracker.socket'; ls -l /tmp/firecracker.socket"
 ```
+
+Replace `fc-nixos` with your `LIMA_INSTANCE_NAME` if modified.
 
 ## License
 
