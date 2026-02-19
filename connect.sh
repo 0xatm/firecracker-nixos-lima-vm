@@ -46,14 +46,13 @@ if ! limactl list 2>/dev/null | awk 'NR>1 {print $1}' | grep -Fxq "$VM_NAME"; th
   exit 1
 fi
 
-if ! limactl shell "$VM_NAME" -- sh -lc 'command -v nc >/dev/null 2>&1' >/dev/null 2>&1; then
-  echo "Error: 'nc' is not available in the guest; rerun ./scripts/bootstrap.sh." >&2
-  exit 1
-fi
-
 limactl start "$VM_NAME" >/dev/null 2>&1 || true
 
-limactl shell "$VM_NAME" -- sudo systemctl start firecracker-microvm-start >/dev/null
+if ! limactl shell "$VM_NAME" -- sudo -n systemctl start firecracker-microvm-start.service >/dev/null; then
+  echo "Error: failed to start firecracker-microvm-start.service in guest." >&2
+  limactl shell "$VM_NAME" -- sudo systemctl --no-pager --full status firecracker-microvm-start.service >&2 || true
+  exit 1
+fi
 
 exec ssh \
   -o "ProxyCommand=limactl shell ${VM_NAME} -- nc %h %p" \

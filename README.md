@@ -1,15 +1,15 @@
-# Firecracker-on-Lima (Portable NixOS Stack)
+# Firecracker-on-Lima (Declarative NixOS)
 
-This repository provides a portable, fresh-clone workflow to run a Firecracker microVM inside a NixOS Lima VM on Apple Silicon.
+This repo bootstraps a NixOS Lima VM that declaratively runs Firecracker and a nested Ubuntu microVM.
 
-1. Install Lima.
-2. Bootstrap the NixOS guest.
-3. Connect directly to the inner Firecracker VM.
+It builds on:
+- [`yashdiq/firecracker-lima-vm`](https://github.com/yashdiq/firecracker-lima-vm) for the original Firecracker-on-Lima flow and networking approach
+- [`nixos-lima/nixos-lima`](https://github.com/nixos-lima/nixos-lima) for the NixOS-on-Lima base template
 
 ## Prerequisites
 
 - macOS on Apple Silicon
-- `limactl` installed (via Homebrew or Nix)
+- Lima (`limactl`)
 
 Install examples:
 
@@ -25,37 +25,41 @@ nix-env -iA nixpkgs.lima
 
 ## Quick Start
 
-From the repository root:
+From repo root:
 
 ```bash
 ./scripts/bootstrap.sh
 ./connect.sh
 ```
 
-What `bootstrap.sh` does:
+`bootstrap.sh` will:
+- create/recreate the Lima VM (`fc-nixos` by default)
+- stage Firecracker + Lima NixOS modules into `/etc/nixos`
+- apply a **bootable** declarative generation (`nixos-rebuild boot`)
+- reboot the guest and verify Firecracker services
+- export the nested microVM SSH key to `./.state/ssh/microvm.id_rsa`
 
-- creates or recreates the Lima instance (`fc-nixos` by default),
-- applies NixOS config and Firecracker services in the guest,
-- initializes Firecracker assets on first run,
-- exports the inner guest SSH key to `./.state/ssh/microvm.id_rsa`.
+`connect.sh` will:
+- ensure the Lima VM is running
+- start `firecracker-microvm-start.service`
+- SSH into the nested microVM via Lima proxy
 
 ## Configuration
 
-`scripts/bootstrap.sh` auto-loads `./.bootstrap.env` if present.
+`./scripts/bootstrap.sh` auto-loads `./.bootstrap.env` if present.
 
-Example `./.bootstrap.env`:
+Example:
 
 ```bash
-LIMA_CPUS=4
-LIMA_MEMORY=4GiB
-LIMA_DISK=100GiB
-MICROVM_VCPUS=1
-MICROVM_MEM_MIB=1024
-MICROVM_ROOTFS_SIZE=1G
+LIMA_CPUS=8
+LIMA_MEMORY=14GiB
+LIMA_DISK=80GiB
+MICROVM_VCPUS=6
+MICROVM_MEM_MIB=49152
+MICROVM_ROOTFS_SIZE=40G
 ```
 
 Supported variables:
-
 - `LIMA_INSTANCE_NAME` (default: `fc-nixos`)
 - `LIMA_TEMPLATE_PATH` (default: `lima/nixos.yaml`)
 - `LIMA_CPUS` (default: `4`)
@@ -64,40 +68,34 @@ Supported variables:
 - `MICROVM_VCPUS` (default: `1`)
 - `MICROVM_MEM_MIB` (default: `1024`)
 - `MICROVM_ROOTFS_SIZE` (default: `1G`)
-- `FC_BOOTSTRAP_FORCE=1` to skip the interactive delete confirmation
+- `FC_BOOTSTRAP_FORCE=1` (skip delete confirmation)
 
-Unit formats:
+Unit notes:
+- `LIMA_MEMORY` / `LIMA_DISK` use Lima byte units like `GiB`
+- `MICROVM_MEM_MIB` uses integer MiB
+- `MICROVM_ROOTFS_SIZE` uses `truncate` syntax (`G`, `M`, etc.)
 
-- `LIMA_MEMORY` / `LIMA_DISK`: use Lima-style units like `4GiB`, `100GiB`.
-- `MICROVM_MEM_MIB`: use an integer MiB value like `1024`, `12288`.
-- `MICROVM_ROOTFS_SIZE`: use `truncate -s` style size values like `20G`, `1G`.
+Why mixed units: Lima and Firecracker/rootfs tooling consume different unit formats; the script passes each in its native format.
 
 Precedence:
-
-- exported shell env vars override `.bootstrap.env`,
-- `.bootstrap.env` overrides script defaults.
-
-## Bootstrap Behavior
-
-- If the instance already exists, `bootstrap.sh` asks for confirmation before deletion.
-- In non-interactive shells, bootstrap aborts instead of deleting unless `FC_BOOTSTRAP_FORCE=1` is set.
-- Bootstrap is intentionally destructive to avoid drift.
+- exported shell env vars override `.bootstrap.env`
+- `.bootstrap.env` overrides script defaults
 
 ## Daily Commands
 
-Connect (starts services as needed):
+Connect to nested microVM:
 
 ```bash
 ./connect.sh
 ```
 
-Stop the Lima instance:
+Stop Lima VM:
 
 ```bash
 ./scripts/stop.sh
 ```
 
-Reset everything (delete Lima instance + local state):
+Reset everything (delete VM + local state):
 
 ```bash
 ./scripts/reset.sh
@@ -105,44 +103,39 @@ Reset everything (delete Lima instance + local state):
 
 ## Repo Layout
 
-- `scripts/bootstrap.sh` - create/recreate Lima guest and apply config
+- `scripts/bootstrap.sh` - deterministic VM bootstrap + declarative guest config
 - `scripts/stop.sh` - stop Lima instance
-- `scripts/reset.sh` - delete Lima instance and local state
-- `connect.sh` - SSH helper from host to inner Firecracker VM
-- `lima/nixos.yaml` - base Lima template
-- `nixos/configuration.nix` - NixOS module applied in guest
-- `nixos/scripts/init-first-run.sh` - one-time Firecracker asset initialization
-- `nixos/scripts/start-stack.sh` - Firecracker startup and networking
-
+- `scripts/reset.sh` - delete Lima instance + local state
+- `connect.sh` - host-to-microVM SSH helper
+- `lima/nixos.yaml` - Lima template (nested virtualization enabled)
+- `nixos/configuration.nix` - Firecracker NixOS module
+- `nixos/lima.nix` - vendored `nixos-lima` base guest module
+- `nixos/lima-init.nix` - vendored `nixos-lima` cidata/guest-agent init module
+- `nixos/scripts/init-first-run.sh` - one-time kernel/rootfs init inside guest
+- `nixos/scripts/start-stack.sh` - Firecracker API config + tap/NAT + microVM start
 
 ## Troubleshooting
 
-### On Host
-
-Check service state:
-
-```bash
-limactl shell fc-nixos -- sudo systemctl status firecracker firecracker-microvm-init firecracker-microvm-start
-```
-
-Follow logs:
-
-```bash
-limactl shell fc-nixos -- sudo journalctl -u firecracker -u firecracker-microvm-init -u firecracker-microvm-start -f
-```
-
-Verify KVM availability in guest:
+Check KVM inside guest:
 
 ```bash
 limactl shell fc-nixos -- ls -l /dev/kvm
 ```
 
-## Credits
+Check Firecracker services:
 
-Thank you to the upstream projects this setup builds on:
+```bash
+limactl shell fc-nixos -- sudo systemctl --no-pager --full status firecracker firecracker-microvm-init firecracker-microvm-start
+```
 
-- [`yashdiq/firecracker-lima-vm`](https://github.com/yashdiq/firecracker-lima-vm) for the original Lima + Firecracker flow and script shape
-- [`nixos-lima/nixos-lima`](https://github.com/nixos-lima/nixos-lima) for the NixOS Lima template base
-- [`firecracker-microvm/firecracker`](https://github.com/firecracker-microvm/firecracker)
+Check Firecracker API socket/process:
 
-Licenses remain with their upstream projects (`yashdiq/firecracker-lima-vm` / Firecracker: Apache-2.0, nixos-lima: MIT).
+```bash
+limactl shell fc-nixos -- bash -lc "ps -ef | grep -E '[f]irecracker --api-sock /tmp/firecracker.socket'; ls -l /tmp/firecracker.socket"
+```
+
+## License
+
+Upstream licenses apply:
+- `firecracker-microvm/firecracker` and `yashdiq/firecracker-lima-vm`: Apache-2.0
+- `nixos-lima/nixos-lima`: MIT

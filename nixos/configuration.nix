@@ -1,119 +1,206 @@
-{ lib, pkgs, ... }:
+{ config, lib, pkgs, ... }:
+let
+  cfg = config.firecrackerLima;
+in
 {
-  # The Lima VM boot path is managed outside this module; don't try to install
-  # or manage a bootloader from the layered Firecracker config.
-  boot.loader.grub.enable = lib.mkForce false;
-  boot.loader.systemd-boot.enable = lib.mkForce false;
-  security.sudo.wheelNeedsPassword = false;
+  options.firecrackerLima = {
+    enable = lib.mkEnableOption "Firecracker stack inside the Lima guest" // {
+      default = true;
+    };
 
-  services.openssh.enable = true;
+    workdir = lib.mkOption {
+      type = lib.types.str;
+      default = "/var/lib/firecracker-microvm";
+    };
 
-  environment.systemPackages = with pkgs; [
-    firecracker
-    curl
-    jq
-    iproute2
-    iptables
-    netcat-openbsd
-    openssh
-    squashfsTools
-    e2fsprogs
-    util-linux
-    gnugrep
-    gawk
-    coreutils
-  ];
+    apiSocket = lib.mkOption {
+      type = lib.types.str;
+      default = "/tmp/firecracker.socket";
+    };
 
-  environment.etc."firecracker/env".text = ''
-    WORKDIR=/var/lib/firecracker-microvm
-    API_SOCKET=/tmp/firecracker.socket
-    LOG_PATH=/var/log/firecracker.log
-    TAP_DEV=tap0
-    TAP_IP=172.16.0.1
-    MASK_SHORT=/30
-    GUEST_IP=172.16.0.2
-    GUEST_DNS_1=1.1.1.1
-    GUEST_DNS_2=8.8.8.8
-    FC_MAC=06:00:AC:10:00:02
-    FC_STREAM=v1.13
-    MICROVM_VCPUS=1
-    MICROVM_MEM_MIB=1024
-    ROOTFS_SIZE=1G
-  '';
+    logPath = lib.mkOption {
+      type = lib.types.str;
+      default = "/var/log/firecracker.log";
+    };
 
-  systemd.tmpfiles.rules = [
-    "d /var/lib/firecracker-microvm 0755 root root -"
-    "d /etc/firecracker 0755 root root -"
-    "d /etc/firecracker/scripts 0755 root root -"
-  ];
+    tapDevice = lib.mkOption {
+      type = lib.types.str;
+      default = "tap0";
+    };
 
-  systemd.services.firecracker = {
-    description = "Firecracker API daemon";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    serviceConfig = {
-      Type = "simple";
-      ExecStartPre = "${pkgs.coreutils}/bin/rm -f /tmp/firecracker.socket";
-      ExecStart = "${pkgs.firecracker}/bin/firecracker --api-sock /tmp/firecracker.socket";
-      Restart = "always";
-      RestartSec = 1;
+    tapIp = lib.mkOption {
+      type = lib.types.str;
+      default = "172.16.0.1";
+    };
+
+    maskShort = lib.mkOption {
+      type = lib.types.str;
+      default = "/30";
+    };
+
+    guestIp = lib.mkOption {
+      type = lib.types.str;
+      default = "172.16.0.2";
+    };
+
+    guestDns1 = lib.mkOption {
+      type = lib.types.str;
+      default = "1.1.1.1";
+    };
+
+    guestDns2 = lib.mkOption {
+      type = lib.types.str;
+      default = "8.8.8.8";
+    };
+
+    guestMac = lib.mkOption {
+      type = lib.types.str;
+      default = "06:00:AC:10:00:02";
+    };
+
+    firecrackerStream = lib.mkOption {
+      type = lib.types.str;
+      default = "v1.13";
+    };
+
+    microvmVcpus = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 1;
+    };
+
+    microvmMemMib = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 1024;
+    };
+
+    rootfsSize = lib.mkOption {
+      type = lib.types.str;
+      default = "1G";
     };
   };
 
-  systemd.services.firecracker-microvm-init = {
-    description = "Initialize Firecracker microVM assets on first boot";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    path = with pkgs; [
-      bash
-      coreutils
-      curl
-      gnugrep
-      gawk
-      gnused
-      openssh
-      squashfsTools
-      e2fsprogs
-      util-linux
-    ];
-    serviceConfig = {
-      Type = "oneshot";
-      EnvironmentFile = [
-        "/etc/firecracker/env"
-        "-/etc/firecracker/env.local"
-      ];
-      ExecStart = "/etc/firecracker/scripts/init-first-run.sh";
-      RemainAfterExit = true;
-    };
-  };
+  config = lib.mkIf cfg.enable {
+    # Keep the guest boot path declarative and persistent.
+    boot.loader.systemd-boot.enable = lib.mkForce false;
+    boot.loader.grub.enable = lib.mkForce true;
+    boot.loader.grub.efiSupport = lib.mkDefault true;
+    boot.loader.grub.device = lib.mkDefault "nodev";
+    boot.loader.efi.canTouchEfiVariables = lib.mkDefault false;
 
-  systemd.services.firecracker-microvm-start = {
-    description = "Configure and start Firecracker microVM";
-    wantedBy = [ "multi-user.target" ];
-    requires = [ "firecracker.service" "firecracker-microvm-init.service" ];
-    after = [ "firecracker.service" "firecracker-microvm-init.service" ];
-    path = with pkgs; [
-      bash
-      coreutils
+    security.sudo.wheelNeedsPassword = lib.mkDefault false;
+    services.openssh.enable = true;
+
+    environment.systemPackages = with pkgs; [
+      firecracker
       curl
       jq
       iproute2
       iptables
-      openssh
-      procps
       netcat-openbsd
+      openssh
+      squashfsTools
+      e2fsprogs
+      util-linux
+      gnugrep
+      gawk
+      coreutils
     ];
-    serviceConfig = {
-      Type = "oneshot";
-      EnvironmentFile = [
-        "/etc/firecracker/env"
-        "-/etc/firecracker/env.local"
+
+    environment.etc."firecracker/env".text = ''
+      WORKDIR=${cfg.workdir}
+      API_SOCKET=${cfg.apiSocket}
+      LOG_PATH=${cfg.logPath}
+      TAP_DEV=${cfg.tapDevice}
+      TAP_IP=${cfg.tapIp}
+      MASK_SHORT=${cfg.maskShort}
+      GUEST_IP=${cfg.guestIp}
+      GUEST_DNS_1=${cfg.guestDns1}
+      GUEST_DNS_2=${cfg.guestDns2}
+      FC_MAC=${cfg.guestMac}
+      FC_STREAM=${cfg.firecrackerStream}
+      MICROVM_VCPUS=${toString cfg.microvmVcpus}
+      MICROVM_MEM_MIB=${toString cfg.microvmMemMib}
+      ROOTFS_SIZE=${cfg.rootfsSize}
+    '';
+
+    environment.etc."firecracker/scripts/init-first-run.sh" = {
+      source = ./scripts/init-first-run.sh;
+      mode = "0555";
+    };
+
+    environment.etc."firecracker/scripts/start-stack.sh" = {
+      source = ./scripts/start-stack.sh;
+      mode = "0555";
+    };
+
+    systemd.tmpfiles.rules = [
+      "d ${cfg.workdir} 0755 root root -"
+      "d /etc/firecracker 0755 root root -"
+      "d /etc/firecracker/scripts 0755 root root -"
+    ];
+
+    systemd.services.firecracker = {
+      description = "Firecracker API daemon";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      serviceConfig = {
+        Type = "simple";
+        ExecStartPre = "${pkgs.coreutils}/bin/rm -f ${cfg.apiSocket}";
+        ExecStart = "${pkgs.firecracker}/bin/firecracker --api-sock ${cfg.apiSocket}";
+        Restart = "always";
+        RestartSec = 1;
+      };
+    };
+
+    systemd.services.firecracker-microvm-init = {
+      description = "Initialize Firecracker microVM assets on first boot";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      path = with pkgs; [
+        bash
+        coreutils
+        curl
+        gnugrep
+        gawk
+        gnused
+        openssh
+        squashfsTools
+        e2fsprogs
+        util-linux
       ];
-      ExecStart = "/etc/firecracker/scripts/start-stack.sh";
-      TimeoutStartSec = "3min";
-      RemainAfterExit = true;
+      serviceConfig = {
+        Type = "oneshot";
+        EnvironmentFile = "/etc/firecracker/env";
+        ExecStart = "/etc/firecracker/scripts/init-first-run.sh";
+        RemainAfterExit = true;
+      };
+    };
+
+    systemd.services.firecracker-microvm-start = {
+      description = "Configure and start Firecracker microVM";
+      wantedBy = [ "multi-user.target" ];
+      requires = [ "firecracker.service" "firecracker-microvm-init.service" ];
+      after = [ "firecracker.service" "firecracker-microvm-init.service" ];
+      path = with pkgs; [
+        bash
+        coreutils
+        curl
+        jq
+        iproute2
+        iptables
+        openssh
+        procps
+        netcat-openbsd
+      ];
+      serviceConfig = {
+        Type = "oneshot";
+        EnvironmentFile = "/etc/firecracker/env";
+        ExecStart = "/etc/firecracker/scripts/start-stack.sh";
+        TimeoutStartSec = "3min";
+        RemainAfterExit = true;
+      };
     };
   };
 }
